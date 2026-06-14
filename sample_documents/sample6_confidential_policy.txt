@@ -1,0 +1,18 @@
+PROJECT AURORA - PRODUCT SPECIFICATION DOCUMENT
+CLASSIFICATION: CONFIDENTIAL - STRICTLY RESTRICTED TO PROJECT AURORA TEAM
+Topic: Next-Gen Agentic RAG Platform Architecture
+
+This document contains trade secrets and confidential product specifications for Project Aurora.
+
+1. Product Vision
+Project Aurora is the codename for DocMind AI's next-generation Multi-Agent Collaborative Knowledge Engine. It allows multiple AI subagents to collaborate on resolving user queries with zero latency.
+
+2. Core Architecture
+- Front-End Gateway: Real-time WebSockets communication with active status push.
+- Embedding Layer: Multi-modal embeddings combining text, layout, and visual features.
+- Vector database: Distributed Qdrant cluster with real-time replication.
+
+3. Timeline
+- Alpha Release: October 2026
+- Beta Testing: December 2026
+- Public Launch: February 2027

@@ -279,6 +279,29 @@ sudo apt-get install poppler-utils
 
 ---
 
+## 🌱 Sample Documents & First-Run Seeding
+
+To ensure the chatbot works immediately on the first run, the project includes an auto-seeding system:
+
+1. **Pre-Bundled Samples**: 6 diverse sample documents (PDF, DOCX, TXT, OCR-ready PNGs) are generated in the `sample_documents/` folder.
+2. **Auto-Seeding**: When the backend starts up, if it detects a clean database (0 users), it automatically creates a demo user and triggers background indexing for all 6 sample documents.
+3. **Demo Account**:
+   - **Email**: `demo@docmind.ai`
+   - **Password**: `DemoUser123!`
+
+You can log in immediately with this account to test the chatbot and dashboard features out-of-the-box!
+
+If you ever want to re-seed or manually seed these documents, you can run:
+```bash
+cd backend
+# Activate virtual environment
+venv\Scripts\activate
+# Run seeder
+python seed_samples.py
+```
+
+---
+
 ## 📦 Installation
 
 ### Backend Setup

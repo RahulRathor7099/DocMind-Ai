@@ -1,0 +1,15 @@
+DocMind AI - Employee Conduct Policy Handbook
+Sensitivity Level: Internal
+Topic: Human Resources & Workplace Standards
+Domain: Business
+
+Welcome to DocMind AI. This document outlines the general code of conduct and compliance standards for all team members.
+
+1. Work Hours & Remote Work
+Standard work hours are flexible. Core collaboration hours are 10:00 AM to 4:00 PM. Remote work is supported; ensure your remote setup complies with our IT security protocols.
+
+2. Intellectual Property
+All code, models, and documentation created during your employment belong exclusively to DocMind AI.
+
+3. Professional Conduct
+We expect all employees to maintain a respectful, inclusive, and professional environment. Any form of harassment or discrimination is strictly prohibited.

@@ -16,13 +16,16 @@ from slowapi.errors import RateLimitExceeded
 
 from utils.config import get_settings
 from utils.logger import get_logger
-from models.database import create_tables, engine
+from models.database import create_tables, engine, SessionLocal, User
 from api.upload_routes import router as upload_router
 from api.document_routes import router as document_router
 from api.chat_routes import router as chat_router
 from api.analytics_routes import router as analytics_router
 from api.voice_routes import router as voice_router
 from auth.auth_routes import router as auth_router
+
+from seed_samples import seed_samples_for_user
+from auth.auth_handler import get_password_hash
 
 settings = get_settings()
 logger = get_logger(__name__)
@@ -46,6 +49,53 @@ async def lifespan(app: FastAPI):
     os.makedirs(os.path.join(settings.UPLOAD_DIR, "faiss"), exist_ok=True)
     os.makedirs(os.path.join(settings.UPLOAD_DIR, "temp"), exist_ok=True)
     logger.info("✅ Upload directories ready")
+
+    # Check for empty database and seed if needed
+    db = SessionLocal()
+    try:
+        user_count = db.query(User).count()
+        if user_count == 0:
+            logger.info("🌱 Clean database detected. Generating and seeding sample documents...")
+            # Generate sample files
+            from generate_samples import main as generate_samples_main
+            try:
+                generate_samples_main()
+            except Exception as e:
+                logger.error(f"Failed to generate sample files: {e}")
+            
+            # Create demo user
+            demo_email = "demo@docmind.ai"
+            demo_user = User(
+                email=demo_email,
+                name="Demo User",
+                password_hash=get_password_hash("DemoUser123!"),
+                is_active=True
+            )
+            db.add(demo_user)
+            db.commit()
+            db.refresh(demo_user)
+            logger.info(f"Created demo account: {demo_email}")
+            
+            # Seed documents in background to avoid blocking server start
+            async def run_seeder_bg():
+                logger.info("🌱 Processing sample documents in background...")
+                bg_db = SessionLocal()
+                try:
+                    bg_user = bg_db.query(User).filter(User.email == demo_email).first()
+                    seeded = await seed_samples_for_user(bg_db, bg_user)
+                    logger.info(f"🌱 Seeding complete! Successfully indexed {seeded} sample documents.")
+                except Exception as bg_err:
+                    logger.error(f"Failed to seed sample documents in background: {bg_err}")
+                finally:
+                    bg_db.close()
+            
+            asyncio.create_task(run_seeder_bg())
+        else:
+            logger.info(f"Database contains {user_count} user(s). Skipping seeding.")
+    except Exception as e:
+        logger.error(f"Error checking/seeding database: {e}")
+    finally:
+        db.close()
 
     logger.info(f"🤖 LLM Provider: {settings.LLM_PROVIDER.upper()}")
     logger.info("✅ DocMind AI is ready!")
