@@ -28,4 +28,4 @@ openai>=1.54.4
 tiktoken>=0.8.0
 email-validator>=2.2.0
 pymongo>=4.0.0
-
+psycopg2-binary>=2.9.9
