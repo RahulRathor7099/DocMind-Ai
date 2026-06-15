@@ -1,51 +1,58 @@
 """
 rag/embeddings.py
 -----------------
-Sentence-Transformers embedding generation for DocMind AI RAG pipeline.
+Optimized embedding service for DocMind AI.
 
-Uses a singleton SentenceTransformer model loaded once at startup to
-avoid repeated costly model initialisation.
-
-Public API
-----------
-- get_embedding_model()       → SentenceTransformer (singleton)
-- generate_embeddings(texts)  → np.ndarray  shape (N, D)
-- embed_single(text)          → np.ndarray  shape (D,)
+Uses Google Gemini API (gemini-embedding-2) by default to stay within
+Render's 512MB RAM limit by avoiding loading PyTorch.
+Falls back to local Sentence-Transformers via lazy loading.
 """
 
 from typing import List
-
 import numpy as np
-from sentence_transformers import SentenceTransformer
+import google.generativeai as genai
 
-from utils.config import settings
+from utils.config import get_settings
 from utils.logger import get_logger
 
+settings = get_settings()
 logger = get_logger(__name__)
 
-# ── Singleton model instance ───────────────────────────────────────────────
-_model: SentenceTransformer | None = None
+# Configure Gemini if key is present
+if settings.GEMINI_API_KEY:
+    genai.configure(api_key=settings.GEMINI_API_KEY)
 
 
-def get_embedding_model() -> SentenceTransformer:
+class GeminiEmbeddingWrapper:
+    """Wrapper that mimics SentenceTransformer interface for dimension lookup."""
+    def get_sentence_embedding_dimension(self) -> int:
+        return 3072  # gemini-embedding-2 dimension
+
+
+# Singleton model instance for sentence_transformers (lazy loaded)
+_model = None
+
+
+def get_embedding_model():
     """
-    Return the shared SentenceTransformer model instance.
+    Return the embedding model instance or wrapper.
 
-    The model is loaded on first call and cached for subsequent calls.
-    The model name is taken from ``settings.EMBEDDING_MODEL``
-    (default: ``all-MiniLM-L6-v2``).
-
-    Returns
-    -------
-    SentenceTransformer
-        Loaded embedding model ready for inference.
+    If GEMINI_API_KEY is available, returns a wrapper for Gemini embedding-2.
+    Otherwise, lazy-loads and returns a SentenceTransformer instance.
     """
     global _model
+    
+    if settings.GEMINI_API_KEY:
+        logger.info("Using Google Gemini API (gemini-embedding-2) for embeddings")
+        return GeminiEmbeddingWrapper()
+        
     if _model is None:
-        logger.info(f"Loading embedding model: {settings.EMBEDDING_MODEL}")
-        _model = SentenceTransformer(settings.EMBEDDING_MODEL)
+        logger.info(f"Loading local embedding model: {settings.EMBEDDING_MODEL}")
+        # Lazy import to prevent PyTorch from loading when Gemini API is used
+        from sentence_transformers import SentenceTransformer as LocalSentenceTransformer
+        _model = LocalSentenceTransformer(settings.EMBEDDING_MODEL)
         dim = _model.get_sentence_embedding_dimension()
-        logger.info(f"Embedding model loaded — dimension: {dim}")
+        logger.info(f"Local embedding model loaded — dimension: {dim}")
     return _model
 
 
@@ -53,64 +60,85 @@ def generate_embeddings(texts: List[str]) -> np.ndarray:
     """
     Generate embedding vectors for a list of texts.
 
-    Parameters
-    ----------
-    texts : list[str]
-        Input strings to embed.  Empty strings are allowed; they produce
-        a zero-like vector from the model.
-
-    Returns
-    -------
-    np.ndarray
-        Float32 array of shape ``(len(texts), embedding_dim)``.
-        Returns an empty array of shape ``(0, embedding_dim)`` if
-        *texts* is empty.
-
-    Raises
-    ------
-    RuntimeError
-        If the embedding model fails to produce output.
+    Uses Gemini API if API key is present, otherwise falls back to local
+    SentenceTransformer (lazy loaded).
     """
-    model = get_embedding_model()
-
     if not texts:
-        dim = model.get_sentence_embedding_dimension() or 384
+        dim = 3072 if settings.GEMINI_API_KEY else 384
         logger.warning("generate_embeddings called with empty text list")
         return np.zeros((0, dim), dtype=np.float32)
 
-    logger.debug(f"Generating embeddings for {len(texts)} text(s)")
+    # Replace empty or pure whitespace texts with a placeholder to avoid API errors
+    cleaned_texts = [t if t.strip() else " " for t in texts]
+
+    if settings.GEMINI_API_KEY:
+        logger.debug(f"Generating Gemini embeddings for {len(texts)} text(s)")
+        try:
+            response = genai.embed_content(
+                model="models/gemini-embedding-2",
+                content=cleaned_texts,
+                task_type="retrieval_document"
+            )
+            # Ensure return is a numpy float32 array
+            embeddings = np.array(response["embedding"], dtype=np.float32)
+            
+            # L2 normalise for cosine similarity via dot product / inner product
+            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            norms = np.where(norms == 0, 1.0, norms)
+            normalized = embeddings / norms
+            return normalized.astype(np.float32)
+        except Exception as exc:
+            logger.error(f"Gemini embedding API failed: {exc}. Falling back to local model.")
+
+    # Fallback to local SentenceTransformer
+    model = get_embedding_model()
+    logger.debug(f"Generating local embeddings for {len(texts)} text(s)")
     try:
+        # If we had a fallback from a failed Gemini API call, get_embedding_model() might have returned wrapper
+        if isinstance(model, GeminiEmbeddingWrapper):
+            from sentence_transformers import SentenceTransformer as LocalSentenceTransformer
+            global _model
+            if _model is None:
+                _model = LocalSentenceTransformer(settings.EMBEDDING_MODEL)
+            model = _model
+
         embeddings = model.encode(
-            texts,
+            cleaned_texts,
             batch_size=64,
             show_progress_bar=False,
             convert_to_numpy=True,
-            normalize_embeddings=True,  # L2-normalise for cosine similarity via dot product
+            normalize_embeddings=True,
         )
-        embeddings = embeddings.astype(np.float32)
-        logger.debug(f"Embeddings shape: {embeddings.shape}")
-        return embeddings
+        return embeddings.astype(np.float32)
     except Exception as exc:
-        logger.error(f"Embedding generation failed: {exc}")
+        logger.error(f"Local embedding generation failed: {exc}")
         raise RuntimeError(f"Embedding generation error: {exc}") from exc
 
 
 def embed_single(text: str) -> np.ndarray:
     """
-    Generate a single embedding vector for *text*.
-
-    A convenience wrapper around :func:`generate_embeddings` for the
-    common case of embedding a query string.
-
-    Parameters
-    ----------
-    text : str
-        Input text.
-
-    Returns
-    -------
-    np.ndarray
-        Float32 array of shape ``(embedding_dim,)`` — a 1-D vector.
+    Generate a single embedding vector for a query text.
     """
+    if settings.GEMINI_API_KEY:
+        try:
+            response = genai.embed_content(
+                model="models/gemini-embedding-2",
+                content=text or " ",
+                task_type="retrieval_query"
+            )
+            # Handle single response list structure
+            embedding = np.array(response["embedding"], dtype=np.float32)
+            if embedding.ndim == 2:
+                embedding = embedding[0]
+            
+            # L2 normalise
+            norm = np.linalg.norm(embedding)
+            if norm > 0:
+                embedding = embedding / norm
+            return embedding
+        except Exception as exc:
+            logger.error(f"Gemini query embedding failed: {exc}, falling back to general pipeline")
+            
     embeddings = generate_embeddings([text])
     return embeddings[0]
+
