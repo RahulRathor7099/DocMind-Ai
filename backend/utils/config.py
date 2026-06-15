@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = Field(default=200)
     RAG_TOP_K: int = Field(default=5)
 
+    # SMTP / Email OTP Configuration
+    SMTP_HOST: str = Field(default="smtp.gmail.com")
+    SMTP_PORT: int = Field(default=587)
+    SMTP_USER: str = Field(default="")
+    SMTP_PASSWORD: str = Field(default="")
+    SMTP_FROM_EMAIL: str = Field(default="noreply@docmind.ai")
+    REQUIRE_OTP: bool = Field(default=True)
+
+
     @property
     def faiss_dir(self) -> str:
         import os

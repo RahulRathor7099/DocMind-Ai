@@ -10,6 +10,11 @@ FastAPI router exposing authentication endpoints:
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+import random
+import datetime
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 from auth.auth_handler import (
     create_access_token,
@@ -17,13 +22,125 @@ from auth.auth_handler import (
     get_password_hash,
     verify_password,
 )
-from models.database import User, get_db
-from models.schemas import Token, UserCreate, UserLogin, UserResponse, UserUpdate
+from models.database import User, get_db, PendingOTP
+from models.schemas import Token, UserCreate, UserLogin, UserResponse, UserUpdate, OTPRequest
+from utils.config import settings
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+
+def send_otp_email(to_email: str, otp: str):
+    if not settings.SMTP_USER:
+        logger.info(f"✉️ [MOCK EMAIL] OTP for {to_email} is {otp} (SMTP_USER not configured in .env)")
+        return False
+        
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = settings.SMTP_FROM_EMAIL
+        msg['To'] = to_email
+        msg['Subject'] = f"DocMind AI - Verification Code: {otp}"
+        
+        body = f"""
+        <html>
+            <body style="font-family: Arial, sans-serif; background-color: #0b0b0f; color: #ffffff; padding: 20px; text-align: center;">
+                <div style="max-width: 600px; margin: 0 auto; background-color: #12121a; padding: 30px; border-radius: 12px; border: 1px solid #3b0764;">
+                    <h2 style="color: #a855f7;">DocMind AI</h2>
+                    <p style="color: #cbd5e1; font-size: 16px;">Please use the following 6-digit verification code to complete your signup process:</p>
+                    <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #a855f7; background-color: #0f172a; padding: 15px; border-radius: 8px; margin: 20px 0; display: inline-block;">
+                        {otp}
+                    </div>
+                    <p style="color: #64748b; font-size: 12px; margin-top: 20px;">This code will expire in 5 minutes. If you did not request this code, please ignore this email.</p>
+                </div>
+            </body>
+        </html>
+        """
+        msg.attach(MIMEText(body, 'html'))
+        
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+            server.starttls()
+            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            server.sendmail(settings.SMTP_FROM_EMAIL, to_email, msg.as_string())
+        logger.info(f"✉️ OTP successfully sent to {to_email}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to send OTP email: {e}")
+        logger.info(f"✉️ [FALLBACK] OTP for {to_email} is {otp}")
+        return False
+
+
+def store_otp(db, email: str, otp: str):
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
+    if hasattr(db, "is_mongo"):
+        db.db.pending_otps.update_one(
+            {"email": email},
+            {"$set": {"otp": otp, "expires_at": expires_at}},
+            upsert=True
+        )
+    else:
+        existing = db.query(PendingOTP).filter(PendingOTP.email == email).first()
+        if existing:
+            existing.otp = otp
+            existing.expires_at = expires_at
+        else:
+            new_otp = PendingOTP(email=email, otp=otp, expires_at=expires_at)
+            db.add(new_otp)
+        db.commit()
+
+
+def verify_otp_code(db, email: str, otp: str) -> bool:
+    now = datetime.datetime.utcnow()
+    if hasattr(db, "is_mongo"):
+        otp_doc = db.db.pending_otps.find_one({"email": email})
+        if otp_doc:
+            if otp_doc.get("otp") == otp and otp_doc.get("expires_at") > now:
+                db.db.pending_otps.delete_one({"email": email})
+                return True
+    else:
+        otp_record = db.query(PendingOTP).filter(PendingOTP.email == email).first()
+        if otp_record:
+            if otp_record.otp == otp and otp_record.expires_at > now:
+                db.delete(otp_record)
+                db.commit()
+                return True
+    return False
+
+
+# ── POST /auth/send-otp ────────────────────────────────────────────────────
+
+@router.post(
+    "/send-otp",
+    summary="Generate and send an OTP verification code",
+)
+def send_otp(request_data: OTPRequest, db: Session = Depends(get_db)):
+    """
+    Generate a 6-digit OTP code, save it, and send it via email or print it to logs.
+    """
+    # Check if user already exists
+    existing = db.query(User).filter(User.email == request_data.email).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email is already registered. Please use a unique email.",
+        )
+
+    # Generate 6-digit OTP
+    otp = f"{random.randint(100000, 999999)}"
+    
+    # Store OTP
+    store_otp(db, request_data.email, otp)
+    
+    # Send email
+    email_sent = send_otp_email(request_data.email, otp)
+    
+    # Construct a helpful message for developers
+    msg = "Verification code sent to your email."
+    if not settings.SMTP_USER:
+        msg = f"Developer Mode: OTP is {otp} (logged in backend terminal)."
+        
+    return {"message": msg, "email_sent": email_sent, "debug_otp": None if settings.SMTP_USER else otp}
 
 
 # ── POST /auth/register ────────────────────────────────────────────────────
@@ -37,23 +154,27 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 def register(user_data: UserCreate, db: Session = Depends(get_db)) -> Token:
     """
     Create a new user account and return a JWT token on success.
-
-    - Validates that the email is not already registered.
-    - Hashes the password with bcrypt before persisting.
-    - Returns a Bearer JWT plus basic user info.
-
-    Raises
-    ------
-    HTTPException(409)
-        If the email address is already in use.
     """
     # Check for duplicate email
     existing = db.query(User).filter(User.email == user_data.email).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email address already exists.",
+            detail="Email is already registered. Please use a unique email.",
         )
+
+    # Verify OTP if enabled
+    if settings.REQUIRE_OTP:
+        if not user_data.otp:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Verification code (OTP) is required to register.",
+            )
+        if not verify_otp_code(db, user_data.email, user_data.otp):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired verification code.",
+            )
 
     # Persist new user
     new_user = User(
@@ -68,7 +189,6 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)) -> Token:
 
     logger.info(f"New user registered: {new_user.email} (id={new_user.id})")
 
-    # Issue token
     token = create_access_token(data={"sub": str(new_user.id)})
     return Token(
         access_token=token,
@@ -87,24 +207,20 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)) -> Token:
 def login(credentials: UserLogin, db: Session = Depends(get_db)) -> Token:
     """
     Verify user credentials and return a JWT token.
-
-    - Looks up the user by email.
-    - Verifies the bcrypt password hash.
-    - Returns a Bearer JWT plus basic user info.
-
-    Raises
-    ------
-    HTTPException(401)
-        If the email is not found or the password is incorrect.
-    HTTPException(403)
-        If the account is disabled.
     """
     user = db.query(User).filter(User.email == credentials.email).first()
 
-    if not user or not verify_password(credentials.password, user.password_hash):
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password.",
+            detail="Email not registered.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        
+    if not verify_password(credentials.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -122,6 +238,7 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)) -> Token:
         token_type="bearer",
         user=UserResponse.model_validate(user),
     )
+
 
 
 # ── GET /auth/me ───────────────────────────────────────────────────────────

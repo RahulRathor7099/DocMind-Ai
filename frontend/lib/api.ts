@@ -148,6 +148,12 @@ const auth = {
     };
   },
 
+  sendOtp: async (email: string): Promise<any> => {
+    const response = await axiosInstance.post<any>("/auth/send-otp", { email });
+    return response.data;
+  },
+
+
   me: async (): Promise<User> => {
     const response = await axiosInstance.get<any>("/auth/me");
     return mapUser(response.data);

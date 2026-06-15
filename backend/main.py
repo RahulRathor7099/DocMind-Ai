@@ -37,25 +37,25 @@ limiter = Limiter(key_func=get_remote_address)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown events."""
-    logger.info("🚀 DocMind AI Backend starting up...")
+    logger.info("[Startup] DocMind AI Backend starting up...")
 
     # Create database tables
     create_tables()
-    logger.info("✅ Database tables initialized")
+    logger.info("[DB] Database tables/collections initialized")
 
     # Create upload directories
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     os.makedirs(os.path.join(settings.UPLOAD_DIR, "pages"), exist_ok=True)
     os.makedirs(os.path.join(settings.UPLOAD_DIR, "faiss"), exist_ok=True)
     os.makedirs(os.path.join(settings.UPLOAD_DIR, "temp"), exist_ok=True)
-    logger.info("✅ Upload directories ready")
+    logger.info("[Storage] Upload directories ready")
 
     # Check for empty database and seed if needed
     db = SessionLocal()
     try:
         user_count = db.query(User).count()
         if user_count == 0:
-            logger.info("🌱 Clean database detected. Generating and seeding sample documents...")
+            logger.info("[Seed] Clean database detected. Generating and seeding sample documents...")
             # Generate sample files
             from generate_samples import main as generate_samples_main
             try:
@@ -78,12 +78,12 @@ async def lifespan(app: FastAPI):
             
             # Seed documents in background to avoid blocking server start
             async def run_seeder_bg():
-                logger.info("🌱 Processing sample documents in background...")
+                logger.info("[Seed] Processing sample documents in background...")
                 bg_db = SessionLocal()
                 try:
                     bg_user = bg_db.query(User).filter(User.email == demo_email).first()
                     seeded = await seed_samples_for_user(bg_db, bg_user)
-                    logger.info(f"🌱 Seeding complete! Successfully indexed {seeded} sample documents.")
+                    logger.info(f"[Seed] Seeding complete! Successfully indexed {seeded} sample documents.")
                 except Exception as bg_err:
                     logger.error(f"Failed to seed sample documents in background: {bg_err}")
                 finally:
@@ -97,12 +97,13 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
-    logger.info(f"🤖 LLM Provider: {settings.LLM_PROVIDER.upper()}")
-    logger.info("✅ DocMind AI is ready!")
+    logger.info(f"[AI] LLM Provider: {settings.LLM_PROVIDER.upper()}")
+    logger.info("[Ready] DocMind AI is ready!")
 
     yield
 
-    logger.info("👋 DocMind AI shutting down...")
+    logger.info("[Shutdown] DocMind AI shutting down...")
+
 
 
 # Create FastAPI app

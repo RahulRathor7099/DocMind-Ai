@@ -266,20 +266,38 @@ def list_chat_sessions(
     Includes session ID, message count, last activity timestamp, and a
     preview of the first user message.
     """
-    from sqlalchemy import func
-
-    # Get distinct sessions with stats
-    session_stats = (
-        db.query(
-            ChatHistory.session_id,
-            func.count(ChatHistory.id).label("message_count"),
-            func.max(ChatHistory.created_at).label("last_activity"),
+    if hasattr(db, "is_mongo"):
+        pipeline = [
+            {"$match": {"user_id": current_user.id}},
+            {"$group": {
+                "_id": "$session_id",
+                "message_count": {"$sum": 1},
+                "last_activity": {"$max": "$created_at"}
+            }},
+            {"$sort": {"last_activity": -1}}
+        ]
+        session_stats = []
+        for doc in db.db.chat_history.aggregate(pipeline):
+            class SessionRow:
+                def __init__(self, d):
+                    self.session_id = d["_id"]
+                    self.message_count = d["message_count"]
+                    self.last_activity = d["last_activity"]
+            session_stats.append(SessionRow(doc))
+    else:
+        from sqlalchemy import func
+        session_stats = (
+            db.query(
+                ChatHistory.session_id,
+                func.count(ChatHistory.id).label("message_count"),
+                func.max(ChatHistory.created_at).label("last_activity"),
+            )
+            .filter(ChatHistory.user_id == current_user.id)
+            .group_by(ChatHistory.session_id)
+            .order_by(func.max(ChatHistory.created_at).desc())
+            .all()
         )
-        .filter(ChatHistory.user_id == current_user.id)
-        .group_by(ChatHistory.session_id)
-        .order_by(func.max(ChatHistory.created_at).desc())
-        .all()
-    )
+
 
     result: List[ChatSessionInfo] = []
     for row in session_stats:

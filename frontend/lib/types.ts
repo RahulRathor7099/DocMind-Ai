@@ -44,7 +44,9 @@ export interface RegisterRequest {
   name: string;
   email: string;
   password: string;
+  otp?: string;
 }
+
 
 // ========================
 // Documents
