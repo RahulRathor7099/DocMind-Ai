@@ -285,8 +285,19 @@ class MongoSession:
             columns = [c.key for c in obj.__table__.columns]
             doc = {}
             for col in columns:
-                if hasattr(obj, col):
-                    doc[col] = getattr(obj, col)
+                val = getattr(obj, col, None)
+                if val is None:
+                    column = obj.__table__.columns.get(col)
+                    if column is not None and column.default is not None:
+                        if column.default.is_callable:
+                            try:
+                                val = column.default.arg(None)
+                            except TypeError:
+                                val = column.default.arg()
+                        elif column.default.is_scalar:
+                            val = column.default.arg
+                        setattr(obj, col, val)
+                doc[col] = val
             
             if doc.get("id") is None:
                 new_id = get_next_sequence_value(self.db, collection_name)
