@@ -59,7 +59,7 @@ def send_otp_email(to_email: str, otp: str):
         """
         msg.attach(MIMEText(body, 'html'))
         
-        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=5.0) as server:
             server.starttls()
             server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
             server.sendmail(settings.SMTP_FROM_EMAIL, to_email, msg.as_string())
@@ -139,8 +139,10 @@ def send_otp(request_data: OTPRequest, db: Session = Depends(get_db)):
     msg = "Verification code sent to your email."
     if not settings.SMTP_USER:
         msg = f"Developer Mode: OTP is {otp} (logged in backend terminal)."
+    elif not email_sent:
+        msg = f"Developer Fallback: Failed to send email via SMTP. OTP is {otp} (SMTP port 587 might be blocked by Render)."
         
-    return {"message": msg, "email_sent": email_sent, "debug_otp": None if settings.SMTP_USER else otp}
+    return {"message": msg, "email_sent": email_sent, "debug_otp": None if (settings.SMTP_USER and email_sent) else otp}
 
 
 # ── POST /auth/register ────────────────────────────────────────────────────
