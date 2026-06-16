@@ -288,6 +288,7 @@ def update_profile(
                 )
             current_user.email = update_data.email
 
+    db.add(current_user)
     db.commit()
     db.refresh(current_user)
     logger.info(f"User profile updated: {current_user.email} (id={current_user.id})")

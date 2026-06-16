@@ -228,6 +228,14 @@ def _run_processing_task(document_id: int, file_path: str, filename: str) -> Non
             f"Background processing task failed for document {document_id}: {exc}",
             exc_info=True,
         )
+        try:
+            document = db.query(Document).filter(Document.id == document_id).first()
+            if document:
+                document.status = "failed"
+                document.error_message = f"Background task failed: {exc}"
+                db.commit()
+        except Exception as db_exc:
+            logger.error(f"Failed to update document status to failed in DB: {db_exc}")
     finally:
         db.close()
 

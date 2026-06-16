@@ -27,6 +27,10 @@ export default function SignupPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
 
+  const [requiresOtp, setRequiresOtp] = useState(false);
+  const [otp, setOtp] = useState("");
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+
   const { register, isLoading } = useAuth();
   const router = useRouter();
 
@@ -48,17 +52,75 @@ export default function SignupPage() {
     return Object.keys(newErrors).length === 0;
   };
 
+  const handleSendOtp = async () => {
+    if (!email) return;
+    setIsSendingOtp(true);
+    try {
+      await api.auth.sendOtp(email);
+      toast({
+        title: "Code Sent",
+        description: "A new verification code has been sent to your email.",
+      });
+    } catch (err: any) {
+      const message = err?.response?.data?.detail || "Failed to send verification code.";
+      toast({
+        title: "Error",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateForm()) return;
 
+    if (requiresOtp && !otp.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter the 6-digit verification code.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
-      await register(name.trim(), email, password);
+      await register(name.trim(), email, password, requiresOtp ? otp.trim() : undefined);
       toast({ title: "Account created!", description: "Welcome to DocMind AI." });
       router.push("/dashboard");
     } catch (err: any) {
       const message = err?.response?.data?.detail || "Registration failed. Please try again.";
-      toast({ title: "Sign up failed", description: message, variant: "destructive" });
+      if (message.includes("Verification code (OTP) is required") || message.includes("OTP is required")) {
+        setRequiresOtp(true);
+        toast({
+          title: "Verification Required",
+          description: "A verification code is required. Sending now...",
+        });
+        // We delay the OTP request slightly to ensure state is committed
+        setTimeout(async () => {
+          setIsSendingOtp(true);
+          try {
+            await api.auth.sendOtp(email);
+            toast({
+              title: "Code Sent",
+              description: "A verification code has been sent to your email.",
+            });
+          } catch (sendErr: any) {
+            const sendMsg = sendErr?.response?.data?.detail || "Failed to send verification code.";
+            toast({
+              title: "Error sending OTP",
+              description: sendMsg,
+              variant: "destructive",
+            });
+          } finally {
+            setIsSendingOtp(false);
+          }
+        }, 100);
+      } else {
+        toast({ title: "Sign up failed", description: message, variant: "destructive" });
+      }
     }
   };
 
@@ -196,6 +258,43 @@ export default function SignupPage() {
                 </motion.p>
               )}
             </div>
+
+            {/* OTP Verification Code (conditional) */}
+            {requiresOtp && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                className="space-y-2"
+              >
+                <label className="block text-sm font-medium text-white/70 mb-2">
+                  Verification Code (OTP)
+                </label>
+                <div className="relative flex gap-2">
+                  <div className="relative flex-1">
+                    <ShieldCheck className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+                    <input
+                      type="text"
+                      value={otp}
+                      onChange={(e) => setOtp(e.target.value)}
+                      placeholder="6-digit code"
+                      className="w-full input-dark pl-10 pr-4 py-3 text-sm focus:border-purple-500/30 focus:outline-none transition-all"
+                      maxLength={6}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSendOtp}
+                    disabled={isSendingOtp}
+                    className="px-4 py-3 rounded-xl border border-white/10 text-xs font-semibold text-white/70 hover:text-white hover:bg-white/5 transition-all disabled:opacity-50"
+                  >
+                    {isSendingOtp ? "Sending..." : "Resend"}
+                  </button>
+                </div>
+                <p className="text-[10px] text-white/40">
+                  Please enter the 6-digit verification code sent to your email.
+                </p>
+              </motion.div>
+            )}
 
             {/* Terms */}
             <p className="text-xs text-white/30 text-center">
