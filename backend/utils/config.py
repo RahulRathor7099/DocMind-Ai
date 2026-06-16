@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     SMTP_USER: str = Field(default="")
     SMTP_PASSWORD: str = Field(default="")
     SMTP_FROM_EMAIL: str = Field(default="noreply@docmind.ai")
-    REQUIRE_OTP: bool = Field(default=True)
+    REQUIRE_OTP: bool = Field(default=False)
 
 
     @property
