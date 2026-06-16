@@ -19,7 +19,7 @@ import {
 } from "./types";
 import { generateId } from "./utils";
 
-const BASE_URL = "/api";
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "/api";
 
 // Create axios instance
 const axiosInstance: AxiosInstance = axios.create({
